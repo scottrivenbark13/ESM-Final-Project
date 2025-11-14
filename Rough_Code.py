@@ -13,3 +13,5 @@ if h+h'-E <= 1500
     G = a*(h+h'-E)-b(h+h'-E)^2
 else 
     G = .56;
+end
+
