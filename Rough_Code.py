@@ -9,9 +9,9 @@ E = E0+(k*dQ);
 h = []
 h_prime = []
 G = 0;
-if h+h'-E <= 1500 
-    G = a*(h+h'-E)-b(h+h'-E)^2
+if h + h_prime - E <= 1500 
+    G = a*(h+h_prime-E)-b(h+h_prime-E)^2
 else 
     G = .56;
-end
+
 
