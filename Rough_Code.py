@@ -46,7 +46,7 @@ def initialize(numberPoints, dt):
     values['r'] = 0.3
     values['k'] = 17
     values['nu'] = 100
-    values['v'] = 100,000 # km2 / yr
+    values['v'] = 100,000 * 1000 # km2 / yr, converted to meters 
 
     values['dx'] = (74-30) / numberPoints
     values['dx_m'] = values['dx'] * 111,000
@@ -55,6 +55,7 @@ def initialize(numberPoints, dt):
     values['h'] = np.zeros(numberPoints)
     values["h_prime"] = np.zeros(numberPoints)
     values['lat'] = np.linspace(30, 74, numberPoints)
+    values['E0'] = 550 + 111 * (values['lat']-70) # from paper, this math might be wrong, will probably have to change
     values["h_prime0"] = np.interp(values['lat'], np.array[30, 40, 66, 70, 74], np.array[400, 400, 200, 850, -500]) #generating topography
 
     return values
@@ -79,3 +80,22 @@ def bedrockM (size): #Creating the matricies that will be used to solve equation
     MR[arr_size-1, arr_size-1] = 1
 
     return ML, MR
+
+# Mass balance function, solving for G, likely not going to work first time, dQ is a mess to calculate so
+# I wrote a placeholder function
+
+def massBal(h, h_prime, timestep):
+    dQ = 50 * np.sin(2*np.pi * timestep / 100000)
+    elevation = h + h_prime
+    G = np.zeros(elevation)
+    E = E0 + v['k'] * dQ
+    for i in range(elevation):
+        if elevation[i] - E[i] <= 1500:
+            #quad
+            G[i] = v['a'] * (elevation[i] - E[i]) - v['b'] * (elevation[i] - E[i]) ** 2
+        elif elevation[i] - E[i] > 1500:
+            G[i] = 0.56
+    
+    return G
+
+# Function for Ice density matricies, this is not a one and done call. 
