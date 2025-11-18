@@ -98,4 +98,19 @@ def massBal(h, h_prime, timestep):
     
     return G
 
+
 # Function for Ice density matricies, this is not a one and done call. 
+def iceDensity(size):
+    arr_size = size + 1
+    cD = (v['A']*v['dt'])/(v['dx']**2)
+    # Create the diagonal vectors
+    a = -Cd/2 * np.ones(arr_size)
+    b = (1 + Cd) * np.ones(arr_size)
+    c = -Cd/2 * np.ones(arr_size)
+    b[0] = 1
+    c[0] = 0
+    a[-1] = 0
+    b[-1] = 1
+    left = diags([a, b, c], [-1, 0, 1], shape=(space_step, space_step)) # create the left hand matrix
+    right = np.zeros(arr_size,1): #create the rhs matrix 
+    return left,right
