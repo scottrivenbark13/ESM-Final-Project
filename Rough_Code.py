@@ -148,4 +148,9 @@ def solveBedrock(h, h_prime):
 
 for i in range(700,000):
     # WORK ON MAIN LOOP HERE
+
     temp = 1
+ # order of functions for solving
+final_hprime = solveBedrock(h,h_prime)
+G = massBal(h,h_prime,timestep)
+h_updated = solveIceEquation(h,final_hprime)
