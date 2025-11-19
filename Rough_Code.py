@@ -1,5 +1,6 @@
-# rough idea of the G equation
-# correct variable values later
+'''
+rough idea of the G equation
+ correct variable values later
 a = .81e-3;
 b = .3e-6;
 E0 = 1;
@@ -14,6 +15,7 @@ if h + h_prime - E <= 1500:
 else:
     G = .56;
 
+'''
 
 # Setup (Imports and Variables)
 # NOTE: All units of distance are in METERS
@@ -104,13 +106,35 @@ def iceDensity(size):
     arr_size = size + 1
     cD = (v['A']*v['dt'])/(v['dx']**2)
     # Create the diagonal vectors
-    a = -Cd/2 * np.ones(arr_size)
-    b = (1 + Cd) * np.ones(arr_size)
-    c = -Cd/2 * np.ones(arr_size)
+    a = -cD/2 * np.ones(arr_size)
+    b = (1 + cD) * np.ones(arr_size)
+    c = -cD/2 * np.ones(arr_size)
     b[0] = 1
     c[0] = 0
     a[-1] = 0
     b[-1] = 1
     left = diags([a, b, c], [-1, 0, 1], shape=(space_step, space_step)) # create the left hand matrix
-    right = np.zeros(arr_size,1): #create the rhs matrix 
+    right = np.zeros(arr_size,1) #create the rhs matrix 
     return left,right
+
+
+def solveIceEquation(h, h_prime):
+    ML_Ice, MR_Ice = iceDensity() # fix this function
+    G = massBal(h, h_prime, timestep=1) # change timestep
+    RHS = MR_Ice @ h + v['dt'] * G
+    # need to apply boundary conditions 
+    h_updated = np.linalg.inv(ML_Ice) @ RHS  # this math might be wrong, check later
+    return h_updated
+
+
+def solveBedrock(h, h_prime):
+    ML_Bedrock, MR_Bedrock = bedrockM(v['n'])
+    temp_var = h_prime - v['h_prime0'] + v['r'] * h # makes matrix math easier than it would be otherwise
+    temp_new = np.linalg.inv(ML_Bedrock) @ MR_Bedrock @ temp_var
+    # do we need to apply boundary conditions here? maybe later
+    final_hPrime = temp_new - v['r'] * h + v['h_prime0']
+    return final_hPrime
+
+
+
+
