@@ -22,6 +22,7 @@ else:
 # 1 degree latiture ~= 111,000 m
 # Since all h values are in meters, it is better to use meters instead of degrees when solving\
 # all relevant constant/intital values are stored in the values dictionary
+# code DOES NOT RUN RIGHT NOW, need to fix intial values as well as the main loop, ice density function also needs a rework
 
 
 import numpy as np
@@ -44,27 +45,27 @@ def initialize(numberPoints, dt):
     values['lat_min'] = 30
 
     values['a'] = 0.81 * 10 ** -3
-    values['b'] = 0.30 * 18 ** -6
+    values['b'] = 0.30 * 10 ** -6
     values['r'] = 0.3
     values['k'] = 17
     values['nu'] = 100
-    values['v'] = 100,000 * 1000 # km2 / yr, converted to meters 
+    values['v'] = 100000 * 1000 # km2 / yr, converted to meters 
 
     values['dx'] = (74-30) / numberPoints
-    values['dx_m'] = values['dx'] * 111,000
+    values['dx_m'] = values['dx'] * 111000
 
 
     values['h'] = np.zeros(numberPoints)
     values["h_prime"] = np.zeros(numberPoints)
     values['lat'] = np.linspace(30, 74, numberPoints)
     values['E0'] = 550 + 111 * (values['lat']-70) # from paper, this math might be wrong, will probably have to change
-    values["h_prime0"] = np.interp(values['lat'], np.array[30, 40, 66, 70, 74], np.array[400, 400, 200, 850, -500]) #generating topography
+    values["h_prime0"] = np.interp(values['lat'], np.array([30, 40, 66, 70, 74]), np.array([400, 400, 200, 850, -500])) #generating topography
 
     return values
 
 v = initialize(80, 50) # Test values from paper, 80 points and 50 year timesteps
 
-def bedrockM (size): #Creating the matricies that will be used to solve equation 3
+def bedrockM (size): #Creating the matricies that will be used to solve equation 3, DOES NOT NEED TO BE CALLED MORE THAN ONCE
     arr_size = size + 1
     cD = v['v'] * v['dt'] / v['dx_m'] ** 2
     ML_Data = np.array([[-0.5*cD]*arr_size,[1+cD]*arr_size,[-0.5*cD]*arr_size])
@@ -81,21 +82,28 @@ def bedrockM (size): #Creating the matricies that will be used to solve equation
     ML[arr_size-1, arr_size-1] = 1
     MR[arr_size-1, arr_size-1] = 1
 
+    # not sure why the entire row needs to be zero, had to look it up to get this function working, LOOK INTO THIS
+    ML[arr_size-1, :] = 0 
+    ML[arr_size-1, arr_size-1] = 1
+    MR[arr_size-1, :] = 0
+    MR[arr_size-1, arr_size-1] = 1
+
     return ML, MR
 
 # Mass balance function, solving for G, likely not going to work first time, dQ is a mess to calculate so
-# I wrote a placeholder function
+# I wrote a placeholder function for now, will have more time when I'm not dying from exams to fix this.
 
 def massBal(h, h_prime, timestep):
     dQ = 50 * np.sin(2*np.pi * timestep / 100000)
     elevation = h + h_prime
-    G = np.zeros(elevation)
-    E = E0 + v['k'] * dQ
-    for i in range(elevation):
+    G = np.zeros(len(elevation))
+    E = v['E0'] + v['k'] * dQ
+    for i in range(len(elevation)):
         if elevation[i] - E[i] <= 1500:
-            #quad
+            #quadratic function
             G[i] = v['a'] * (elevation[i] - E[i]) - v['b'] * (elevation[i] - E[i]) ** 2
         elif elevation[i] - E[i] > 1500:
+            #constant
             G[i] = 0.56
     
     return G
@@ -120,7 +128,7 @@ def iceDensity(size):
 
 def solveIceEquation(h, h_prime):
     ML_Ice, MR_Ice = iceDensity() # fix this function
-    G = massBal(h, h_prime, timestep=1) # change timestep
+    G = massBal(h, h_prime, timestep=v['dt']) # change timestep if needed idk if this is right
     RHS = MR_Ice @ h + v['dt'] * G
     # need to apply boundary conditions 
     h_updated = np.linalg.inv(ML_Ice) @ RHS  # this math might be wrong, check later
@@ -132,9 +140,12 @@ def solveBedrock(h, h_prime):
     temp_var = h_prime - v['h_prime0'] + v['r'] * h # makes matrix math easier than it would be otherwise
     temp_new = np.linalg.inv(ML_Bedrock) @ MR_Bedrock @ temp_var
     # do we need to apply boundary conditions here? maybe later
-    final_hPrime = temp_new - v['r'] * h + v['h_prime0']
+    final_hPrime = temp_new + v['h_prime0'] - v['r'] * h
     return final_hPrime
 
 
+# Main loop, likely needs work
 
-
+for i in range(700,000):
+    # WORK ON MAIN LOOP HERE
+    temp = 1
