@@ -163,18 +163,34 @@ def iceDensity(h, h_prime):
     # creating ML
     mid[0] = 1
     upper[0] = 0
-    ML_Data = [lower, mid, upper]
+    lower_full = np.zeros(n)
+    lower_full[1:] = lower
+
+    mid_full = mid
+
+    upper_full = np.zeros(n)
+    upper_full[:-1] = upper
+
+    ML_Data = np.vstack([lower_full, mid_full, upper_full])
     MLdiag = np.array([-1,0,1])
-    ML = sp.sparse.spdiags(ML_Data, MLdiag, n, n).toarray()
+    ML = sp.sparse.diags(ML_Data, MLdiag, shape=(n,n)).toarray()
 
     # had to look this up, idk how it works to be honest need to figure that out
     lower_MR = -lower
     mid_MR = 2 - mid
     upper_MR = -upper
     
+
+    lower_MR_full = np.zeros(n)
+    lower_MR_full[1:] = lower_MR
+
+    mid_MR_full = mid_MR
+
+    upper_MR_full = np.zeros(n)
+    upper_MR_full[:-1] = upper_MR
     MR_data = [lower_MR, mid_MR, upper_MR]
     MRdiag = np.array([-1,0,1])
-    MR = sp.sparse.diags(MR_data, MRdiag, n, n).toarray()
+    MR = sp.sparse.diags(MR_data, MRdiag, shape=(n,n)).toarray()
     
     MR[0, :] = 0
     MR[0, 0] = 1
@@ -183,9 +199,9 @@ def iceDensity(h, h_prime):
 
 
 
-def solveIceEquation(h, h_prime):
+def solveIceEquation(h, h_prime, time):
     ML_Ice, MR_Ice = iceDensity(h, h_prime) # fix this function
-    G = massBal(h, h_prime, currentT) # change timestep if needed idk if this is right
+    G = massBal(h, h_prime, time) # change timestep if needed idk if this is right
     RHS = MR_Ice @ h + v['dt'] * G
     # need to apply boundary conditions 
     RHS[0] = 0
@@ -200,15 +216,15 @@ def solveBedrock(h, h_prime):
     temp_var[-1] = 0
     temp_new = np.linalg.inv(ML_Bedrock) @ MR_Bedrock @ temp_var
     # do we need to apply boundary conditions here? maybe later
+    final_hPrime = temp_new + v['h_prime0'] - v['r'] * h
     final_hPrime[0] = v['h_prime0'][0]
     final_hPrime[-1] = v['h_prime0'][-1]
-    final_hPrime = temp_new + v['h_prime0'] - v['r'] * h
     return final_hPrime
 
 
 # Main loop, likely needs work
-
-for i in range(700,000):
+"""
+for i in range(700000):
     # WORK ON MAIN LOOP HERE
 
     temp = 1
@@ -216,3 +232,53 @@ for i in range(700,000):
 final_hprime = solveBedrock(h,h_prime)
 G = massBal(h,h_prime,timestep)
 h_updated = solveIceEquation(h,final_hprime)
+"""
+
+# setting up the results arrays
+n_years = 700000 /v['dt']
+
+
+save_interval = 50
+
+numSave = int(n_years // save_interval) + 1
+
+results_h = np.zeros((numSave, v['n']))
+results_h_prime = np.zeros((numSave, v['n']))
+results_time = np.zeros(numSave)
+results_volume = np.zeros(numSave)
+
+current_time = 0.0
+save_index = 0
+
+# main loop, saving all the info from running the functions
+for step in range(numSave):
+    time = step * v['dt']
+    
+    h_old = v['h'].copy()
+    h_prime_old = v['h_prime'].copy()
+    
+    h_new = solveIceEquation(h_old, h_prime_old, current_time)
+    
+    h_avg = 0.5 * (h_old + h_new)
+    
+    h_prime_new = solveBedrock(h_avg, h_prime_old)
+    
+    v['h'] = h_new
+    v['h_prime'] = h_prime_new
+    
+    if step % save_interval == 0:
+        results_h[save_index, :] = v['h']
+        results_h_prime[save_index, :] = v['h_prime']
+        results_time[save_index] = time
+        
+        results_volume[save_index] = np.trapz(v['h'], dx=v['dx_m']) * 3000 / 1e9  # from paper, gets total volume
+
+        save_index += 1
+
+
+
+# Seems like the functions work! maybe the numbers are wrong and thats why the plot isn't correct at all
+
+plt.figure(figsize=(12, 5))
+plt.plot(results_time, results_volume, 'b-', linewidth=2)
+plt.show()
