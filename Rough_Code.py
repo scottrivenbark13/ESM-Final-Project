@@ -44,8 +44,8 @@ def initialize(numberPoints, dt):
     values['lat_max'] = 74
     values['lat_min'] = 30
 
-    values['a'] = 0.81 * 10 ** -3
-    values['b'] = 0.30 * 10 ** -6
+    values['a'] = 0.10 * 10 ** -3
+    values['b'] = 0.03 * 10 ** -6
     values['r'] = 0.3
     values['k'] = 17
     values['nu'] = 100
@@ -55,12 +55,11 @@ def initialize(numberPoints, dt):
     values['dx_m'] = values['dx'] * 111000
 
 
-    values['h'] = np.zeros(numberPoints)
-    values["h_prime"] = np.zeros(numberPoints)
     values['lat'] = np.linspace(30, 74, numberPoints)
-    values['E0'] = 550 + 111 * (values['lat']-70) # from paper, this math might be wrong, will probably have to change
+    values['E0'] = 550 + 5 * (values['lat']-70) # from paper, this math might be wrong, will probably have to change
     values["h_prime0"] = np.interp(values['lat'], np.array([30, 40, 66, 70, 74]), np.array([400, 400, 200, 850, -500])) #generating topography
-
+    values['h'] = np.zeros(numberPoints)
+    values["h_prime"] = values["h_prime0"].copy()
     return values
 
 v = initialize(80, 50) # Test values from paper, 80 points and 50 year timesteps
@@ -95,18 +94,27 @@ def bedrockM (size): #Creating the matricies that will be used to solve equation
 # I wrote a placeholder function for now, will have more time when I'm not dying from exams to fix this.
 
 def massBal(h, h_prime, timestep):
-    dQ = 50 * np.sin(2*np.pi * timestep / 100000)
+    #dQ = 50 * np.sin(2*np.pi * timestep / 100000)
+    # multi-frequency forcing
+    dQ = 0.03 * (
+    1.0*np.sin(2*np.pi*timestep/19000) +
+    0.6*np.sin(2*np.pi*timestep/23000) +
+    1.2*np.sin(2*np.pi*timestep/41000)
+    )
     elevation = h + h_prime
     G = np.zeros(len(elevation))
     E = v['E0'] + v['k'] * dQ
     for i in range(len(elevation)):
-        if elevation[i] - E[i] <= 1500:
+        if elevation[i] - E[i] <= 0:
             #quadratic function
             G[i] = v['a'] * (elevation[i] - E[i]) - v['b'] * (elevation[i] - E[i]) ** 2
-        elif elevation[i] - E[i] > 1500:
+        elif elevation[i] - E[i] <= 1500:
+            #quadratic function
+            value = v['a'] * (elevation[i] - E[i]) - v['b'] * (elevation[i] - E[i]) ** 2
+            G[i] = max(value, 0.0)
+        else:
             #constant
             G[i] = 0.56
-    
     return G
 
 '''
@@ -177,7 +185,7 @@ def iceDensity(h, h_prime):
 
     # had to look this up, idk how it works to be honest need to figure that out
     lower_MR = -lower
-    mid_MR = 2 - mid
+    mid_MR = 1 - (mid - 1)
     upper_MR = -upper
     
 
@@ -188,7 +196,7 @@ def iceDensity(h, h_prime):
 
     upper_MR_full = np.zeros(n)
     upper_MR_full[:-1] = upper_MR
-    MR_data = [lower_MR, mid_MR, upper_MR]
+    MR_data = np.vstack([lower_MR_full, mid_MR_full, upper_MR_full])
     MRdiag = np.array([-1,0,1])
     MR = sp.sparse.diags(MR_data, MRdiag, shape=(n,n)).toarray()
     
@@ -205,7 +213,9 @@ def solveIceEquation(h, h_prime, time):
     RHS = MR_Ice @ h + v['dt'] * G
     # need to apply boundary conditions 
     RHS[0] = 0
+    RHS[-1] = RHS[-2]
     h_updated = np.linalg.inv(ML_Ice) @ RHS  # this math might be wrong, check later
+    h_updated = np.maximum(h_updated, 0.0)  # Ice can't be negative
     return h_updated
 
 
@@ -214,7 +224,8 @@ def solveBedrock(h, h_prime):
     temp_var = h_prime - v['h_prime0'] + v['r'] * h # makes matrix math easier than it would be otherwise
     temp_var[0] = 0
     temp_var[-1] = 0
-    temp_new = np.linalg.inv(ML_Bedrock) @ MR_Bedrock @ temp_var
+    temp_new = (np.linalg.inv(ML_Bedrock) @ MR_Bedrock @ temp_var)
+    temp_new /= v['nu']
     # do we need to apply boundary conditions here? maybe later
     final_hPrime = temp_new + v['h_prime0'] - v['r'] * h
     final_hPrime[0] = v['h_prime0'][0]
@@ -235,7 +246,7 @@ h_updated = solveIceEquation(h,final_hprime)
 """
 
 # setting up the results arrays
-n_years = 700000 /v['dt']
+n_years = int(700000 /v['dt'])
 
 
 save_interval = 50
@@ -246,13 +257,26 @@ results_h = np.zeros((numSave, v['n']))
 results_h_prime = np.zeros((numSave, v['n']))
 results_time = np.zeros(numSave)
 results_volume = np.zeros(numSave)
+results_area = np.zeros(numSave)
 
 current_time = 0.0
 save_index = 0
 
+# --- spin-up to equilibrium (no orbital forcing) --- This was taken from chat GPT
+for i in range(2000):   # 2000 * dt (dt=50) = 100 kyr spin-up
+    h_old = v['h'].copy()
+    h_prime_old = v['h_prime'].copy()
+
+    h_new = solveIceEquation(h_old, h_prime_old, time=0)  # no forcing
+    h_avg = 0.5 * (h_old + h_new)
+    h_prime_new = solveBedrock(h_avg, h_prime_old)
+
+    v['h'] = h_new
+    v['h_prime'] = h_prime_new
+
 # main loop, saving all the info from running the functions
-for step in range(numSave):
-    time = step * v['dt']
+for step in range(n_years):
+    current_time = step * v['dt']
     
     h_old = v['h'].copy()
     h_prime_old = v['h_prime'].copy()
@@ -269,9 +293,13 @@ for step in range(numSave):
     if step % save_interval == 0:
         results_h[save_index, :] = v['h']
         results_h_prime[save_index, :] = v['h_prime']
-        results_time[save_index] = time
+        results_time[save_index] = current_time
         
-        results_volume[save_index] = np.trapz(v['h'], dx=v['dx_m']) * 3000 / 1e9  # from paper, gets total volume
+        results_volume[save_index] = np.trapezoid(v['h'], dx=v['dx_m']) * (3000 / 1e6)  # from paper, gets total volume
+        # compute cross-sectional area in m^2
+        area_m2 = np.trapezoid(v['h'], dx=v['dx_m'])
+        area_km2 = area_m2 / 1e6
+        results_area[save_index] = area_km2
 
         save_index += 1
 
@@ -280,5 +308,15 @@ for step in range(numSave):
 # Seems like the functions work! maybe the numbers are wrong and thats why the plot isn't correct at all
 
 plt.figure(figsize=(12, 5))
-plt.plot(results_time, results_volume, 'b-', linewidth=2)
+plt.xlabel('Time (Years)')
+plt.ylabel('Cross Sectional area (km^2)')
+plt.title('Total Cross Sectional Volume of Glaciers over 700k years')
+plt.plot(results_time[:save_index], results_area[:save_index], 'b-', linewidth=2)
+plt.show()
+
+plt.figure(figsize=(12, 5))
+plt.xlabel('Time (Years)')
+plt.ylabel('Cross Sectional volume (km^3)')
+plt.title('Total Cross Sectional Volume of Glaciers over 700k years')
+plt.plot(results_time[:save_index], results_volume[:save_index], 'b-', linewidth=2)
 plt.show()
