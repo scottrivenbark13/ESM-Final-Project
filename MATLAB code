@@ -1,0 +1,297 @@
+%Based on the python code
+% Initialize parameters
+dt = 50; % years
+n = 80;
+numberPoints= 80;
+alpha = 5;
+beta = 2;
+A = 5.77 * 10^-4;
+lat_max = 74;
+lat_min = 30;
+a = 10^-4;
+b = 0.00000003;
+r = 0.3;
+k = 17;
+nu = 100;
+v = 100000 * 1000; % km converted to meters
+dx = (74-30) / (numberPoints - 1);
+dx_m = dx * 111000;
+% Small regularization constant to prevent singular matrices(AI added to
+% fix errors)
+reg_const = 1e-10;
+% Minimum ice thickness to prevent numerical issues(also AI assisted)
+h_min = 0.0;
+lat = linspace(30, 74, numberPoints);
+E0 = 550 + 5 * (lat - 70);
+% Generate topography
+h_prime0 = interp1([30, 40, 66, 70, 74], [400, 400, 200, 850, -500], lat);
+h = zeros(1, numberPoints);
+h_prime = h_prime0;
+%create bedrock matrices
+size = numberPoints;
+cD = v * dt / dx_m^2;
+% Left Matrix
+ML_Bedrock = zeros(size, size);
+for i = 1:size
+    ML_Bedrock(i, i) = 1 + cD;
+    if i > 1
+        ML_Bedrock(i, i-1) = -0.5 * cD;
+    end
+    if i < size
+        ML_Bedrock(i, i+1) = -0.5 * cD;
+    end
+end
+
+% Right Matrix
+MR_Bedrock = zeros(size,size);
+for i = 1:size
+    MR_Bedrock(i, i) = 1 - cD;
+    if i > 1
+        MR_Bedrock(i, i-1) = 0.5 * cD;
+    end
+    if i < size
+        MR_Bedrock(i, i+1) = 0.5 * cD;
+    end
+end
+% Dirichlet boundary conditions
+ML_Bedrock(1, :) = 0;
+ML_Bedrock(1, 1) = 1;
+MR_Bedrock(1, :) = 0;
+MR_Bedrock(1, 1) = 1;
+ML_Bedrock(size, :) = 0;
+ML_Bedrock(size, size) = 1;
+MR_Bedrock(size, :) = 0;
+MR_Bedrock(size, size) = 1;
+% Setup results arrays based on python code
+n_years = floor(700000 / dt);
+save_interval = 50;
+numSave = floor(n_years / save_interval) + 1;
+results_h = zeros(numSave, n);
+results_h_prime = zeros(numSave, n);
+results_time = zeros(numSave, 1);
+results_volume = zeros(numSave, 1);
+results_area = zeros(numSave, 1);
+current_time = 0.0;
+save_index = 1;
+%AI assissted to simplify code for ice equation
+for i = 1:2000
+    h_old = h;
+    h_prime_old = h_prime;
+    % Solve Ice Equation with time = 0 (no forcing)
+    timestep = 0;
+    noZeroMath = 1e-10;    
+    % Calculate elevation and gradient
+    elevation = h_old + h_prime_old;
+    gradient = zeros(1, n);    
+    for j = 2:n-1
+        gradient(j) = (elevation(j+1) - elevation(j-1)) / (2 * dx_m);
+    end
+    gradient(1) = (elevation(2) - elevation(1)) / dx_m;
+    gradient(n) = (elevation(n) - elevation(n-1)) / dx_m;
+    % Had issues calculating these calculations(AI used)
+    % Calculate diffusivity with lower bound only
+    diffuse = A * (h_old + noZeroMath).^alpha .* (abs(gradient) + noZeroMath).^beta;
+    diffuse = max(diffuse, 1e-15);  % Only prevent extremely small values   
+    % Create ice density matrices
+    lower = zeros(1, n-1);
+    mid = ones(1, n);
+    upper = zeros(1, n-1);    
+    for j = 2:n-1
+        D_left = 0.5 * (diffuse(j-1) + diffuse(j));
+        D_right = 0.5 * (diffuse(j) + diffuse(j+1));      
+        r_left = 0.5 * dt * D_left / dx_m^2;
+        r_right = 0.5 * dt * D_right / dx_m^2;        
+        lower(j-1) = -r_left;
+        mid(j) = 1 + r_left + r_right;
+        upper(j) = -r_right;
+    end 
+    % Create ML_Ice
+    ML_Ice = zeros(n, n);
+    for j = 1:n
+        ML_Ice(j, j) = mid(j) + reg_const;  % Add regularization
+        if j > 1
+            ML_Ice(j, j-1) = lower(j-1);
+        end
+        if j < n
+            ML_Ice(j, j+1) = upper(j);
+        end
+    end
+    ML_Ice(1, 1) = 1;
+    if n > 1
+        ML_Ice(1, 2) = 0;
+    end    
+    % Create MR_Ice
+    lower_MR = -lower;
+    mid_MR = 1 - (mid - 1);
+    upper_MR = -upper;    
+    MR_Ice = zeros(n, n);
+    for j = 1:n
+        MR_Ice(j, j) = mid_MR(j);
+        if j > 1
+            MR_Ice(j, j-1) = lower_MR(j-1);
+        end
+        if j < n
+            MR_Ice(j, j+1) = upper_MR(j);
+        end
+    end
+    MR_Ice(1, :) = 0;
+    MR_Ice(1, 1) = 1;    
+    % Calculate mass balance (G)
+    dQ = 0.03 * (1.0*sin(2*pi*timestep/19000) + 0.6*sin(2*pi*timestep/23000) + 1.2*sin(2*pi*timestep/41000));
+    E = E0 + k * dQ;
+    G = zeros(1, n);    
+    for j = 1:n
+        if elevation(j) - E(j) <= 0
+            G(j) = a * (elevation(j) - E(j)) - b * (elevation(j) - E(j))^2;
+        elseif elevation(j) - E(j) <= 1500
+            value = a * (elevation(j) - E(j)) - b * (elevation(j) - E(j))^2;
+            G(j) = max(value, 0.0);
+        else
+            G(j) = 0.56;
+        end
+    end    
+    % Solve for h_new 
+    RHS = (MR_Ice * h_old')' + dt * G;
+    RHS(1) = 0;
+    RHS(n) = RHS(n-1);    
+    % Check condition number before solving.(AI used to fix this issue i
+    % kept getting)
+    cond_num = condest(ML_Ice);
+    if cond_num > 1e12
+        warning('Matrix is poorly conditioned (cond ~ %.2e). Using pinv instead.', cond_num);
+        h_new = (pinv(ML_Ice) * RHS')';
+    else
+        h_new = (ML_Ice \ RHS')';
+    end
+    h_new = max(h_new, 0.0);    
+    % Solve for h_prime_new
+    h_avg = 0.5 * (h_old + h_new);
+    temp_var = h_prime_old - h_prime0 + r * h_avg;
+    temp_var(1) = 0;
+    temp_var(n) = 0;
+    temp_new = (ML_Bedrock \ (MR_Bedrock * temp_var'))';
+    temp_new = temp_new / nu;
+    h_prime_new = temp_new + h_prime0 - r * h_avg;
+    h_prime_new(1) = h_prime0(1);
+    h_prime_new(n) = h_prime0(n);    
+    h = h_new;
+    h_prime = h_prime_new;
+end
+%main
+for step = 1:n_years
+    current_time = (step - 1) * dt;    
+    h_old = h;
+    h_prime_old = h_prime;    
+    % Solve Ice Equation
+    timestep = current_time;
+    noZeroMath = 1e-10;    
+    elevation = h_old + h_prime_old;
+    gradient = zeros(1, n);    
+    for j = 2:n-1
+        gradient(j) = (elevation(j+1) - elevation(j-1)) / (2 * dx_m);
+    end
+    gradient(1) = (elevation(2) - elevation(1)) / dx_m;
+    gradient(n) = (elevation(n) - elevation(n-1)) / dx_m;    
+    % Calculate diffusivity with lower bound only
+    diffuse = A * (h_old + noZeroMath).^alpha .* (abs(gradient) + noZeroMath).^beta;
+    diffuse = max(diffuse, 1e-15);  % Only prevent extremely small values    
+    % Create ice density matrices
+    lower = zeros(1, n-1);
+    mid = ones(1, n);
+    upper = zeros(1, n-1);    
+    for j = 2:n-1
+        D_left = 0.5 * (diffuse(j-1) + diffuse(j));
+        D_right = 0.5 * (diffuse(j) + diffuse(j+1));        
+        r_left = 0.5 * dt * D_left / dx_m^2;
+        r_right = 0.5 * dt * D_right / dx_m^2;        
+        lower(j-1) = -r_left;
+        mid(j) = 1 + r_left + r_right;
+        upper(j) = -r_right;
+    end    
+    % Create ML_Ice
+    ML_Ice = zeros(n, n);
+    for j = 1:n
+        ML_Ice(j, j) = mid(j) + reg_const;  % Add regularization
+        if j > 1
+            ML_Ice(j, j-1) = lower(j-1);
+        end
+        if j < n
+            ML_Ice(j, j+1) = upper(j);
+        end
+    end
+    ML_Ice(1, 1) = 1;
+    if n > 1
+        ML_Ice(1, 2) = 0;
+    end
+    
+    % Create MR_Ice
+    lower_MR = -lower;
+    mid_MR = 1 - (mid - 1);
+    upper_MR = -upper;
+    
+    MR_Ice = zeros(n, n);
+    for j = 1:n
+        MR_Ice(j, j) = mid_MR(j);
+        if j > 1
+            MR_Ice(j, j-1) = lower_MR(j-1);
+        end
+        if j < n
+            MR_Ice(j, j+1) = upper_MR(j);
+        end
+    end
+    MR_Ice(1, :) = 0;
+    MR_Ice(1, 1) = 1;    
+    % Q and G calculations
+    dQ = 0.03 * (1.0*sin(2*pi*timestep/19000) + 0.6*sin(2*pi*timestep/23000) + 1.2*sin(2*pi*timestep/41000));
+    E = E0 + k * dQ;
+    G = zeros(1, n);    
+    for j = 1:n
+        if elevation(j) - E(j) <= 0
+            G(j) = a * (elevation(j) - E(j)) - b * (elevation(j) - E(j))^2;
+        elseif elevation(j) - E(j) <= 1500
+            value = a * (elevation(j) - E(j)) - b * (elevation(j) - E(j))^2;
+            G(j) = max(value, 0.0);
+        else
+            G(j) = 0.56;
+        end
+    end    
+    % Solve for h_new
+    RHS = (MR_Ice * h_old')' + dt * G;
+    RHS(1) = 0;
+    RHS(n) = RHS(n-1);    
+    % Use backslash for matrix math
+    h_new = (ML_Ice \ RHS')';
+    h_new = max(h_new, 0.0);  % Ice thickness cannot be negative    
+    % h_prime_new
+    h_avg = 0.5 * (h_old + h_new);
+    temp_var = h_prime_old - h_prime0 + r * h_avg;
+    temp_var(1) = 0;
+    temp_var(n) = 0;
+    temp_new = (ML_Bedrock \ (MR_Bedrock * temp_var'))';
+    temp_new = temp_new / nu;
+    h_prime_new = temp_new + h_prime0 - r * h_avg;
+    h_prime_new(1) = h_prime0(1);
+    h_prime_new(n) = h_prime0(n);    
+    h = h_new;
+    h_prime = h_prime_new;    
+    % Save results(AI assisted)
+    if mod(step-1, save_interval) == 0
+        results_h(save_index, :) = h;
+        results_h_prime(save_index, :) = h_prime;
+        results_time(save_index) = current_time;        
+        results_volume(save_index) = trapz(lat, h) * dx_m * (3000 / 1e6);
+        area_m2 = trapz(lat, h) * dx_m;
+        area_km2 = area_m2 / 1e6;
+        results_area(save_index) = area_km2;        
+        save_index = save_index + 1;
+    end    
+end
+%Plot
+plot(results_time(1:save_index-1), results_area(1:save_index-1))
+xlabel('Time (Years)');
+ylabel('Cross Sectional area(km^2)');
+title('Total Cross Sectional Area');
+plot(results_time(1:save_index-1), results_volume(1:save_index-1))
+xlabel('Time (Years)');
+ylabel('Cross Sectional volume (km^3)');
+title('Total Cross Sectional Volume');
